@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -968,7 +968,6 @@ function startWorkout(type) {
     type, phase,
     exercises: exercises.map(ex => ({
       ...ex,
-      setCount: ex.sets,
       sets: Array.from({ length: ex.sets }, () => ({ kg: '', reps: '', done: false }))
     })),
     startTime: Date.now()
@@ -1001,9 +1000,9 @@ function renderWorkoutExercises() {
       <div class="ex-block-head">
         <div>
           <div class="ex-block-name">${ex.name}</div>
-          <div class="ex-block-sub">${ex.setCount} sets × ${ex.reps} · Rest ${ex.rest}s · ${ex.tempo}${ex.note ? ' · ' + ex.note : ''}</div>
+          <div class="ex-block-sub">${ex.sets} sets × ${ex.reps} · Rest ${ex.rest}s · ${ex.tempo}${ex.note ? ' · ' + ex.note : ''}</div>
         </div>
-        <div class="badge badge-gold">${ex.setCount}×${ex.reps}</div>
+        <div class="badge badge-gold">${ex.sets}×${ex.reps}</div>
       </div>
       <div style="display:grid;grid-template-columns:28px 1fr 1fr 44px;gap:8px;padding:6px 12px;border-top:1px solid var(--border)">
         <div></div>
