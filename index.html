@@ -9,6 +9,8 @@
 <meta name="theme-color" content="#0d0d0d">
 <link rel="manifest" href="manifest.json">
 <title>HT Trainer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -294,12 +296,19 @@ textarea { resize: none; min-height: 70px; }
 
 #run-map-placeholder {
   flex: 1; background: var(--surface2);
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 12px; color: var(--text3);
-  position: relative; overflow: hidden;
+  display: block;
+  position: relative; overflow: hidden; min-height: 200px;
 }
-#run-map-placeholder canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-.map-text { position: relative; z-index: 1; text-align: center; }
+#leaflet-map { 
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  z-index: 1; 
+}
+.map-text { 
+  position: absolute; z-index: 2; text-align: center;
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+  pointer-events: none;
+}
 .map-text .mt-icon { font-size: 40px; margin-bottom: 8px; }
 .map-text p { font-size: 13px; color: var(--text3); }
 
@@ -701,10 +710,10 @@ canvas.chart { width: 100%; height: 100%; }
   </div>
 
   <div id="run-map-placeholder">
-    <canvas id="route-canvas"></canvas>
+    <div id="leaflet-map" style="width:100%;height:100%;"></div>
     <div class="map-text" id="map-no-gps">
       <div class="mt-icon">📍</div>
-      <p>GPS will track your route<br>when you start running</p>
+      <p>Tap Start to begin GPS tracking</p>
     </div>
   </div>
 
@@ -968,6 +977,7 @@ function startWorkout(type) {
     type, phase,
     exercises: exercises.map(ex => ({
       ...ex,
+      setCount: ex.sets,
       sets: Array.from({ length: ex.sets }, () => ({ kg: '', reps: '', done: false }))
     })),
     startTime: Date.now()
@@ -1000,9 +1010,9 @@ function renderWorkoutExercises() {
       <div class="ex-block-head">
         <div>
           <div class="ex-block-name">${ex.name}</div>
-          <div class="ex-block-sub">${ex.sets} sets × ${ex.reps} · Rest ${ex.rest}s · ${ex.tempo}${ex.note ? ' · ' + ex.note : ''}</div>
+          <div class="ex-block-sub">${ex.setCount} sets × ${ex.reps} · Rest ${ex.rest}s · ${ex.tempo}${ex.note ? ' · ' + ex.note : ''}</div>
         </div>
-        <div class="badge badge-gold">${ex.sets}×${ex.reps}</div>
+        <div class="badge badge-gold">${ex.setCount}×${ex.reps}</div>
       </div>
       <div style="display:grid;grid-template-columns:28px 1fr 1fr 44px;gap:8px;padding:6px 12px;border-top:1px solid var(--border)">
         <div></div>
@@ -1152,7 +1162,7 @@ function updateTimerDisplay() {
 }
 
 // ══════════════════════════════════════════════
-// RUN TRACKER
+// RUN TRACKER — Leaflet map
 // ══════════════════════════════════════════════
 let runState = {
   running: false, paused: false,
@@ -1160,23 +1170,86 @@ let runState = {
   distanceKm: 0, positions: [], splits: [],
   lastKm: 0, watchId: null, timer: null
 };
+let leafletMap = null;
+let leafletPolyline = null;
+let leafletMarker = null;
+let leafletLatLngs = [];
+
+function initMap(lat, lon) {
+  if (leafletMap) {
+    leafletMap.invalidateSize();
+    leafletMap.setView([lat, lon], 16);
+    return;
+  }
+  leafletMap = L.map('leaflet-map', {
+    zoomControl: true, attributionControl: false, tap: false
+  }).setView([lat, lon], 16);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, crossOrigin: true
+  }).addTo(leafletMap);
+
+  leafletPolyline = L.polyline([], {
+    color: '#c9a84c', weight: 5, opacity: 0.9
+  }).addTo(leafletMap);
+
+  const icon = L.divIcon({
+    className: '',
+    html: '<div style="width:14px;height:14px;border-radius:50%;background:#c9a84c;border:3px solid white;box-shadow:0 0 6px rgba(0,0,0,0.5)"></div>',
+    iconSize: [14, 14], iconAnchor: [7, 7]
+  });
+  leafletMarker = L.marker([lat, lon], { icon }).addTo(leafletMap);
+
+  // Multiple invalidateSize calls to handle any render timing issues
+  setTimeout(() => leafletMap && leafletMap.invalidateSize(), 100);
+  setTimeout(() => leafletMap && leafletMap.invalidateSize(), 500);
+  setTimeout(() => leafletMap && leafletMap.invalidateSize(), 1000);
+}
+
+function updateMap(lat, lon) {
+  if (!leafletMap) { initMap(lat, lon); return; }
+  leafletLatLngs.push([lat, lon]);
+  leafletPolyline.setLatLngs(leafletLatLngs);
+  leafletMarker.setLatLng([lat, lon]);
+  leafletMap.panTo([lat, lon]);
+}
 
 function startRun() {
   document.getElementById('run-screen').classList.add('open');
   resetRunState();
+
+  // Wait for screen to be fully visible before initialising map
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(pos => {
+          document.getElementById('map-no-gps').style.display = 'none';
+          initMap(pos.coords.latitude, pos.coords.longitude);
+        }, () => {
+          // Permission not yet granted — show map at default, GPS updates on Start
+          initMap(51.505, -0.09);
+          showToast('Allow location access for GPS tracking');
+        }, { timeout: 6000, maximumAge: 30000 });
+      } else {
+        initMap(51.505, -0.09);
+      }
+    }, 200);
+  });
 }
+
 function resetRunState() {
   runState = { running: false, paused: false, startTime: null, elapsed: 0, pauseStart: null, totalPaused: 0, distanceKm: 0, positions: [], splits: [], lastKm: 0, watchId: null, timer: null };
+  leafletLatLngs = [];
   document.getElementById('run-distance').textContent = '0.00';
   document.getElementById('run-time').textContent = '00:00';
   document.getElementById('run-pace').textContent = '--:--';
   document.getElementById('splits-list').innerHTML = '';
   document.getElementById('run-start-btn').textContent = '▶ Start';
   document.getElementById('run-lap-btn').disabled = true;
-  const canvas = document.getElementById('route-canvas');
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  document.getElementById('map-no-gps').style.display = 'flex';
+  // Reset map
+  if (leafletMap) {
+    leafletPolyline && leafletPolyline.setLatLngs([]);
+  }
 }
 
 function toggleRun() {
@@ -1201,16 +1274,18 @@ function toggleRun() {
 }
 
 function startGPS() {
-  if (!navigator.geolocation) return;
+  if (!navigator.geolocation) { showToast('GPS not available on this device'); return; }
   runState.watchId = navigator.geolocation.watchPosition(pos => {
-    const p = { lat: pos.coords.latitude, lon: pos.coords.longitude, t: Date.now() };
+    const { latitude: lat, longitude: lon } = pos.coords;
+    const p = { lat, lon, t: Date.now() };
+
     if (runState.positions.length > 0) {
       const prev = runState.positions[runState.positions.length - 1];
-      const d = haversine(prev.lat, prev.lon, p.lat, p.lon);
-      if (d > 0.003) { // filter noise < 3m
+      const d = haversine(prev.lat, prev.lon, lat, lon);
+      if (d > 0.003) { // ignore positions < 3m apart (GPS noise)
         runState.distanceKm += d;
         document.getElementById('run-distance').textContent = runState.distanceKm.toFixed(2);
-        // km splits
+        // Auto km splits
         const currentKm = Math.floor(runState.distanceKm);
         if (currentKm > runState.lastKm) {
           const splitTime = runState.elapsed;
@@ -1219,12 +1294,23 @@ function startGPS() {
           renderSplit(currentKm, splitTime);
           if (navigator.vibrate) navigator.vibrate(100);
         }
-        drawRoute();
+        updateMap(lat, lon);
         document.getElementById('map-no-gps').style.display = 'none';
+      }
+    } else {
+      // First position — centre map immediately
+      document.getElementById('map-no-gps').style.display = 'none';
+      if (!leafletMap) {
+        initMap(lat, lon);
+        setTimeout(() => leafletMap && leafletMap.invalidateSize(), 300);
+      } else {
+        leafletMap.setView([lat, lon], 16);
       }
     }
     runState.positions.push(p);
-  }, null, { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 });
+  }, err => {
+    showToast('GPS error — check location permissions');
+  }, { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
 }
 
 function updateRun() {
@@ -1249,7 +1335,7 @@ function markLap() {
 
 function renderSplit(km, secs) {
   const m = Math.floor(secs / 60), s = secs % 60;
-  const pacePerKm = km > 0 ? Math.floor(secs / (typeof km === 'number' ? km : runState.distanceKm)) : 0;
+  const pacePerKm = typeof km === 'number' && km > 0 ? Math.floor(secs / km) : 0;
   const pm = Math.floor(pacePerKm / 60), ps = pacePerKm % 60;
   const row = document.createElement('div');
   row.className = 'split-row';
@@ -1260,37 +1346,6 @@ function renderSplit(km, secs) {
   `;
   document.getElementById('splits-list').appendChild(row);
   row.scrollIntoView({ behavior: 'smooth' });
-}
-
-function drawRoute() {
-  const canvas = document.getElementById('route-canvas');
-  const rect = canvas.parentElement.getBoundingClientRect();
-  canvas.width = rect.width; canvas.height = rect.height;
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (runState.positions.length < 2) return;
-  const lats = runState.positions.map(p => p.lat);
-  const lons = runState.positions.map(p => p.lon);
-  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-  const minLon = Math.min(...lons), maxLon = Math.max(...lons);
-  const pad = 40;
-  const scaleX = (canvas.width - pad*2) / (maxLon - minLon || 0.001);
-  const scaleY = (canvas.height - pad*2) / (maxLat - minLat || 0.001);
-  const toX = lon => pad + (lon - minLon) * scaleX;
-  const toY = lat => canvas.height - pad - (lat - minLat) * scaleY;
-  ctx.beginPath();
-  ctx.strokeStyle = 'rgba(201,168,76,0.3)';
-  ctx.lineWidth = 3;
-  runState.positions.forEach((p, i) => {
-    i === 0 ? ctx.moveTo(toX(p.lon), toY(p.lat)) : ctx.lineTo(toX(p.lon), toY(p.lat));
-  });
-  ctx.stroke();
-  // current pos dot
-  const last = runState.positions[runState.positions.length - 1];
-  ctx.beginPath();
-  ctx.arc(toX(last.lon), toY(last.lat), 6, 0, Math.PI * 2);
-  ctx.fillStyle = '#c9a84c';
-  ctx.fill();
 }
 
 function haversine(lat1, lon1, lat2, lon2) {
@@ -1326,6 +1381,8 @@ function closeRun() {
   clearInterval(runState.timer);
   if (runState.watchId) navigator.geolocation.clearWatch(runState.watchId);
   document.getElementById('run-screen').classList.remove('open');
+  // Invalidate map size so it renders correctly next open
+  setTimeout(() => leafletMap && leafletMap.invalidateSize(), 300);
 }
 
 // ══════════════════════════════════════════════
