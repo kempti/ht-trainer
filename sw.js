@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ht-trainer-v1';
+ const CACHE_NAME = 'ht-trainer-v1';
 const ASSETS = [
   './index.html',
   './manifest.json'
