@@ -211,8 +211,8 @@ textarea { resize: none; min-height: 70px; }
 .ex-block-sub { font-size: 11px; color: var(--text3); }
 
 .set-row {
-  display: grid; grid-template-columns: 28px 1fr 1fr 44px;
-  gap: 8px; align-items: center; padding: 8px 12px;
+  display: grid; grid-template-columns: 28px 1fr 1fr 1fr 44px;
+  gap: 6px; align-items: center; padding: 8px 12px;
   border-top: 1px solid var(--border);
 }
 .set-num { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--text3); text-align: center; }
@@ -286,7 +286,7 @@ textarea { resize: none; min-height: 70px; }
   flex-shrink: 0;
 }
 .run-stat {
-  background: var(--surface); padding: 16px 12px; text-align: center;
+  background: var(--surface); padding: 12px 12px; text-align: center;
 }
 .run-stat .rs-val {
   font-family: 'Barlow Condensed', sans-serif; font-size: 28px; font-weight: 800;
@@ -700,8 +700,8 @@ canvas.chart { width: 100%; height: 100%; }
       <div class="rs-lbl">KM</div>
     </div>
     <div class="run-stat">
-      <div class="rs-val" id="run-time">00:00</div>
-      <div class="rs-lbl">Time</div>
+      <div class="rs-val" id="run-time" style="font-size:52px;letter-spacing:0.04em;line-height:1;">00:00</div>
+      <div class="rs-lbl">Elapsed</div>
     </div>
     <div class="run-stat">
       <div class="rs-val" id="run-pace">--:--</div>
@@ -1000,36 +1000,72 @@ function updateElapsed() {
   document.getElementById('ws-elapsed').textContent = m + ':' + String(s).padStart(2, '0');
 }
 
+function getPreviousExerciseData(exerciseName, currentSessionType) {
+  // Find the most recent session of the same type that has data for this exercise
+  const sessions = DB.sessions()
+    .filter(s => s.type === currentSessionType)
+    .slice()
+    .reverse(); // most recent first
+
+  for (const session of sessions) {
+    const ex = session.exercises?.find(e => e.name === exerciseName);
+    if (ex && ex.sets?.some(s => s.kg || s.reps)) {
+      return {
+        date: session.date,
+        sets: ex.sets
+      };
+    }
+  }
+  return null;
+}
+
 function renderWorkoutExercises() {
   const container = document.getElementById('ws-exercises');
   container.innerHTML = '';
   currentWorkout.exercises.forEach((ex, ei) => {
+    const prev = getPreviousExerciseData(ex.name, currentWorkout.type);
+
     const div = document.createElement('div');
     div.className = 'ex-block';
+
+    const prevBadge = prev
+      ? `<div style="font-size:10px;color:var(--text3);margin-top:4px;">Last: ${prev.date}</div>`
+      : '';
+
     div.innerHTML = `
       <div class="ex-block-head">
-        <div>
+        <div style="flex:1">
           <div class="ex-block-name">${ex.name}</div>
           <div class="ex-block-sub">${ex.setCount} sets × ${ex.reps} · Rest ${ex.rest}s · ${ex.tempo}${ex.note ? ' · ' + ex.note : ''}</div>
+          ${prevBadge}
         </div>
         <div class="badge badge-gold">${ex.setCount}×${ex.reps}</div>
       </div>
-      <div style="display:grid;grid-template-columns:28px 1fr 1fr 44px;gap:8px;padding:6px 12px;border-top:1px solid var(--border)">
+      <div style="display:grid;grid-template-columns:28px 1fr 1fr 1fr 44px;gap:6px;padding:6px 12px;border-top:1px solid var(--border)">
         <div></div>
         <div class="set-col-label">KG</div>
         <div class="set-col-label">REPS</div>
+        <div class="set-col-label" style="color:var(--text3);opacity:0.6">PREV</div>
         <div></div>
       </div>
     `;
+
     ex.sets.forEach((set, si) => {
+      const prevSet = prev?.sets?.[si];
+      const prevText = prevSet
+        ? `${prevSet.kg || '—'}kg / ${prevSet.reps || '—'}`
+        : '—';
+
       const row = document.createElement('div');
       row.className = 'set-row';
+      row.style.gridTemplateColumns = '28px 1fr 1fr 1fr 44px';
       row.innerHTML = `
         <div class="set-num">${si + 1}</div>
-        <input class="set-input" type="number" placeholder="kg" step="0.5" value="${set.kg}" 
+        <input class="set-input" type="number" placeholder="${prevSet?.kg || 'kg'}" step="0.5" value="${set.kg}"
           onchange="updateSet(${ei},${si},'kg',this.value)" inputmode="decimal">
-        <input class="set-input" type="number" placeholder="reps" value="${set.reps}" 
+        <input class="set-input" type="number" placeholder="${prevSet?.reps || 'reps'}" value="${set.reps}"
           onchange="updateSet(${ei},${si},'reps',this.value)" inputmode="numeric">
+        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);display:flex;align-items:center;justify-content:center;text-align:center;line-height:1.3;">${prevText}</div>
         <div class="set-done-btn ${set.done ? 'done' : ''}" onclick="toggleSetDone(${ei},${si},this)">
           ${set.done ? '✓' : '○'}
         </div>
@@ -1050,8 +1086,9 @@ function toggleSetDone(ei, si, btn) {
   btn.classList.toggle('done', set.done);
   btn.textContent = set.done ? '✓' : '○';
   if (set.done) {
+    // Pre-load the rest timer with the correct duration but don't open it
     const rest = currentWorkout.exercises[ei].rest;
-    if (rest > 0) { setTimer(rest); openTimer(); }
+    if (rest > 0) { setTimer(rest); }
   }
 }
 
